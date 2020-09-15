@@ -38,7 +38,7 @@
 
    @interface 是编译器的语法糖，会被解析为一个继承于`java.lang.annotation.Annotation`的接口
 
-   注解的数据类型只有一下几种：
+   注解的数据类型只有以下几种：
 
    - 八种原始类型
    - String
@@ -53,4 +53,83 @@
 
 # 2 注解的原理
 
-注解实质上是一个接口，接口是不可以被实例化的，那么注解的方法是怎样被调用的呢？答案是：对于被`@Retention(RetentionPolicy.RUNTIME)`标记的注解，JVM会使用动态代理生成一个代理类实现注解的接口，我们通过反射获取到的注解实例，就是代理类，我们通过代理就可以调用注解的方法，拿到返回值。
+注解实质上是一个接口，接口是不可以被实例化的，那么注解的方法是怎样被调用的呢？答案是：对于被`@Retention(RetentionPolicy.RUNTIME)`标记的注解，JVM会使用动态代理生成一个代理类实现注解的接口，我们通过反射获取到的注解实例，就是动态代理，我们通过代理就可以调用注解的方法，拿到返回值。
+
+验证：
+
+<img src="注解.png"/>
+
+可以看到，获取到的注解的实例是`com.sun.$Proxy1`，这正是动态代理对象对应的Class对象，为了进一步验证是动态代理，我们知道java的动态代理对象，是继承于`java.lang.reflect.Proxy`的一个子类对象，Proxy中有一个InvocationHandler的接口引用，通过这个对象（resource）自然可以获取到，InvocationHandler的引用，可以看到，实现注解方法的InvocationHandler的实现类对象是`sun.reflect.annotation.AnnotationInvocationHandler`实例，注解方法的实现，就在这个类中了。那么我们看一下他的源码：
+
+构造方法：
+
+```java
+    AnnotationInvocationHandler(Class<? extends Annotation> var1, Map<String, Object> var2) {
+        Class[] var3 = var1.getInterfaces();//获取父接口
+        if (var1.isAnnotation() && var3.length == 1 && var3[0] == Annotation.class) {//本身是注解类型，并且只继承于Annotation
+            this.type = var1;
+            this.memberValues = var2;
+        } else {
+            throw new AnnotationFormatError("Attempt to create proxy for a non-annotation type.");
+        }
+    }
+```
+
+第一个参数是一个Class对象，应该是注解类型的Class，第二个是一个类似于String到Object的映射，再看其invoke方法：
+
+```java
+ public Object invoke(Object var1, Method var2, Object[] var3) {
+        String var4 = var2.getName();
+        Class[] var5 = var2.getParameterTypes();
+        if (var4.equals("equals") && var5.length == 1 && var5[0] == Object.class) {
+            return this.equalsImpl(var3[0]);//实现equals方法
+        } else if (var5.length != 0) {//决定了注解的方法没有参数
+            throw new AssertionError("Too many parameters for an annotation method");
+        } else {
+            byte var7 = -1;
+            switch(var4.hashCode()) {
+            case -1776922004:
+                if (var4.equals("toString")) {
+                    var7 = 0;
+                }
+                break;
+            case 147696667:
+                if (var4.equals("hashCode")) {
+                    var7 = 1;
+                }
+                break;
+            case 1444986633:
+                if (var4.equals("annotationType")) {
+                    var7 = 2;
+                }
+            }
+
+            switch(var7) {
+            case 0:
+                return this.toStringImpl();//实现toString
+            case 1:
+                return this.hashCodeImpl();//实现hashCode
+            case 2:
+                return this.type;//实现annotationType toString  hashCode annotationType都是java.annotation.Annotation中的方法
+            default://这里才是实现用户自定义的注解方法
+                Object var6 = this.memberValues.get(var4);//看来构造函数中传递的String-Object映射，是注解方法名称和其返回值的映射
+                if (var6 == null) {
+                    throw new IncompleteAnnotationException(this.type, var4);
+                } else if (var6 instanceof ExceptionProxy) {
+                    throw ((ExceptionProxy)var6).generateException();
+                } else {
+                    if (var6.getClass().isArray() && Array.getLength(var6) != 0) {
+                        var6 = this.cloneArray(var6);
+                    }
+                    return var6;
+                }
+            }
+        }
+    }
+```
+
+可以看到，invoke方法对toString  hashCode annotationType做了特殊的处理，构造函数传递了注解的方法名称和其返回值的Map映射，执行某个方法，就是从map中以方法名称为key获取值。
+
+JDK的操作应该是这样的，当我们获取一个注解实例的时候，JDK首先会解析注解的class文件以及当前的class文件，获得接口方法名称-返回值 这样的key-value映射，然后作为参数，传给AnnotationInvocationHandler的构造函数创建对象，再调用Proxy的方法获得代理对象，返回代理对象的引用。
+
+但是如何从class文件获取到接口方法名称-返回值 这样的key-value映射呢，这需要用到字节码技术中的常量池索引解析，这个内容以后再介绍
