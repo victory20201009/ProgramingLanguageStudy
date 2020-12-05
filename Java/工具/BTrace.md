@@ -17,7 +17,7 @@ BTrace通过下面的几个步骤和组件，完成对JVM的监控和连接；
 
 整体执行流程图如下：
 
-<img src="/imgs/BTrace执行流程.jpeg"/>
+<img src="imgs/BTrace执行流程.jpeg"/>
 
 出于安全性的限制，BTrace在使用的时候，有以下的限制条件：
 
